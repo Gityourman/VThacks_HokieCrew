@@ -1166,7 +1166,9 @@ def handle_query():
         response_text = route_query(query_text)
     except Exception as exc:
         app.logger.exception("Query failed")
-        return jsonify({"error": f"Campus data is temporarily unavailable. Details: {exc}"}), 503
+        cause = exc.__cause__ or exc.__context__
+        detail = f"{exc} | caused by: {cause}" if cause else str(exc)
+        return jsonify({"error": f"Campus data is temporarily unavailable. Details: {detail}"}), 503
 
     # Convert response to speech if requested
     audio_base64 = ""
