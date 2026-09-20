@@ -717,86 +717,60 @@ gemini_model = GEMINI_API_KEY  # Truthy if key is set
 # Use for: Real-time bus tracking, gym occupancy trends, query performance
 
 TIGERDATA_URL = os.environ.get("TIGERDATA_URL", "")
+# Fallback: hardcoded connection string (password may need updating - check Timescale dashboard)
+if not TIGERDATA_URL:
+    TIGERDATA_URL = "postgres://tsdbadmin:e8x2xyz8rlrafokn2@wu00rbek8w.wpv5i950k6.tsdb.cloud.timescale.com:37733/tsdb?sslmode=require"
 tigerdata_conn = None
 
 if TIGERDATA_URL and TIGERDATA_AVAILABLE:
-    try:
-        tigerdata_conn = psycopg2.connect(TIGERDATA_URL, connect_timeout=5)
-        tigerdata_conn.autocommit = True  # A failed optional statement must not poison later queries.
-        print("✅ Connected to Tiger Data (Timescale)")
-        
-        # Initialize hypertables for time-series data
-        with tigerdata_conn.cursor() as cur:
-            # Table 1: Real-time bus positions
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS bus_positions_realtime (
-                    time TIMESTAMPTZ NOT NULL,
-                    vehicle_id TEXT NOT NULL,
-                    route_code TEXT NOT NULL,
-                    route_name TEXT,
-                    latitude DOUBLE PRECISION,
-                    longitude DOUBLE PRECISION,
-                    current_stop TEXT,
-                    next_stop TEXT,
-                    eta_minutes INTEGER,
-                    speed_mph DOUBLE PRECISION
-                )
-            """)
-            
-            # Convert to hypertable for time-series optimization
-            try:
+    for _attempt in range(3):
+        try:
+            tigerdata_conn = psycopg2.connect(TIGERDATA_URL, connect_timeout=30)
+            tigerdata_conn.autocommit = True
+            print("✅ Connected to Tiger Data (Timescale)")
+            with tigerdata_conn.cursor() as cur:
                 cur.execute("""
-                    SELECT create_hypertable('bus_positions_realtime', 'time',
-                                           if_not_exists => TRUE)
+                    CREATE TABLE IF NOT EXISTS bus_positions_realtime (
+                        time TIMESTAMPTZ NOT NULL, vehicle_id TEXT NOT NULL,
+                        route_code TEXT NOT NULL, route_name TEXT,
+                        latitude DOUBLE PRECISION, longitude DOUBLE PRECISION,
+                        current_stop TEXT, next_stop TEXT,
+                        eta_minutes INTEGER, speed_mph DOUBLE PRECISION
+                    )
                 """)
-            except Exception as e:
-                # Table might already be a hypertable
-                pass
-            
-            # Table 2: Gym occupancy tracking
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS gym_occupancy_realtime (
-                    time TIMESTAMPTZ NOT NULL,
-                    facility_name TEXT NOT NULL,
-                    current_occupancy INTEGER,
-                    max_capacity INTEGER,
-                    occupancy_percent DOUBLE PRECISION
-                )
-            """)
-            
-            try:
+                try:
+                    cur.execute("SELECT create_hypertable('bus_positions_realtime', 'time', if_not_exists => TRUE)")
+                except Exception:
+                    pass
                 cur.execute("""
-                    SELECT create_hypertable('gym_occupancy_realtime', 'time',
-                                           if_not_exists => TRUE)
+                    CREATE TABLE IF NOT EXISTS gym_occupancy_realtime (
+                        time TIMESTAMPTZ NOT NULL, facility_name TEXT NOT NULL,
+                        current_occupancy INTEGER, max_capacity INTEGER,
+                        occupancy_percent DOUBLE PRECISION
+                    )
                 """)
-            except Exception as e:
-                pass
-            
-            # Table 3: Query performance tracking
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS query_performance (
-                    time TIMESTAMPTZ NOT NULL,
-                    query_type TEXT NOT NULL,
-                    response_time_ms INTEGER,
-                    ai_service TEXT,
-                    success BOOLEAN
-                )
-            """)
-            
-            try:
+                try:
+                    cur.execute("SELECT create_hypertable('gym_occupancy_realtime', 'time', if_not_exists => TRUE)")
+                except Exception:
+                    pass
                 cur.execute("""
-                    SELECT create_hypertable('query_performance', 'time',
-                                           if_not_exists => TRUE)
+                    CREATE TABLE IF NOT EXISTS query_performance (
+                        time TIMESTAMPTZ NOT NULL, query_type TEXT NOT NULL,
+                        response_time_ms INTEGER, ai_service TEXT, success BOOLEAN
+                    )
                 """)
-            except Exception as e:
-                pass
-            
+                try:
+                    cur.execute("SELECT create_hypertable('query_performance', 'time', if_not_exists => TRUE)")
+                except Exception:
+                    pass
             tigerdata_conn.commit()
             print("✅ Tiger Data tables initialized")
-            
-    except Exception as e:
-        print(f"⚠️ Tiger Data connection failed: {str(e)}")
-        tigerdata_conn = None
+            break
+        except Exception as e:
+            print(f"⚠️ Tiger Data attempt {_attempt+1}/3 failed: {str(e)}")
+            tigerdata_conn = None
+            if _attempt < 2:
+                time.sleep(5)
 else:
     print("⚠️ Tiger Data not configured. Real-time tracking will use Delta Lake only.")
 
