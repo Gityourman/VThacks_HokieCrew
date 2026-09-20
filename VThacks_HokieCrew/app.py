@@ -11,52 +11,59 @@ Multi-AI Architecture:
 import os
 import base64
 import json
+import time
 from flask import Flask, render_template_string, request, jsonify
 import pandas as pd
-from databricks import sql
-from databricks.sdk.core import Config
 
 
 def load_table(table_name):
     """Read Unity Catalog through a SQL warehouse.
-    Works on both Databricks Apps (OAuth) and Render (PAT token).
+    Uses the Databricks SDK WorkspaceClient which auto-discovers auth:
+    - Databricks Apps: OAuth token from the app's service principal
+    - Render with DATABRICKS_TOKEN: PAT auth
+    - Render with DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET: OAuth M2M
     """
     import re
-    from urllib.parse import urlparse
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){2}", table_name):
         raise ValueError("Expected a catalog.schema.table identifier")
-    http_path = os.getenv("DATABRICKS_HTTP_PATH")
     warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
-    if not http_path and warehouse_id:
-        http_path = f"/sql/1.0/warehouses/{warehouse_id}"
-    if not http_path:
-        raise RuntimeError("Configure DATABRICKS_WAREHOUSE_ID or DATABRICKS_HTTP_PATH for the app")
-    # Resolve host: prefer explicit env var, fall back to Databricks SDK Config
-    host = os.getenv("DATABRICKS_HOST", "").replace("https://", "").replace("http://", "").rstrip("/")
-    access_token = os.getenv("DATABRICKS_TOKEN", "")
-    if not host or not access_token:
-        # Databricks Apps environment: use SDK Config (OAuth)
-        try:
-            cfg = Config()
-            if cfg.host:
-                host = urlparse(cfg.host if "://" in cfg.host else "https://" + cfg.host).netloc
-        except Exception:
-            pass
-    if not host:
-        raise RuntimeError("Configure DATABRICKS_HOST (and DATABRICKS_TOKEN for Render) for the app")
+    if not warehouse_id:
+        raise RuntimeError("Configure DATABRICKS_WAREHOUSE_ID for the app")
+    from databricks.sdk import WorkspaceClient
+    w = WorkspaceClient()
     identifier = ".".join(f"`{part}`" for part in table_name.split("."))
-    # On Render: use access_token directly. On Databricks Apps: use credentials_provider.
-    if access_token:
-        conn = sql.connect(server_hostname=host, http_path=http_path, access_token=access_token)
+    stmt = w.statement_execution.execute_statement(
+        statement=f"SELECT * FROM {identifier}",
+        warehouse_id=warehouse_id,
+    )
+    # Poll for result (warehouse may need to auto-start from STOPPED)
+    for _ in range(90):  # 90 x 2s = 180s max wait
+        result = w.statement_execution.get_statement(stmt.statement_id)
+        state = result.status.state
+        state_name = state.name if hasattr(state, 'name') else str(state)
+        if state_name == "SUCCEEDED":
+            break
+        elif state_name in ("FAILED", "CANCELED"):
+            raise RuntimeError(f"SQL query failed: {result.status.error}")
+        time.sleep(2)
     else:
-        cfg = Config()
-        conn = sql.connect(server_hostname=host, http_path=http_path,
-                           credentials_provider=lambda: cfg.authenticate)
-    with conn:
-        with conn.cursor() as cursor:
-            cursor.execute(f"SELECT * FROM {identifier}")
-            return pd.DataFrame.from_records(cursor.fetchall(),
-                                             columns=[c[0] for c in cursor.description])
+        raise RuntimeError("SQL query timed out after 180s")
+    # Convert to pandas DataFrame
+    columns = [c.name for c in result.manifest.schema.columns]
+    col_types = [str(c.type_name).upper() for c in result.manifest.schema.columns]
+    data = result.result.data_array if result.result and result.result.data_array else []
+    rows = [list(row) for row in data]
+    df = pd.DataFrame(rows, columns=columns)
+    # Statement execution API returns all values as strings; convert back to native types
+    for i, col in enumerate(columns):
+        tname = col_types[i]
+        if tname == "BOOLEAN":
+            df[col] = df[col].map(lambda v: True if str(v).lower() == "true" else (False if str(v).lower() == "false" else None))
+        elif tname in ("INT", "BIGINT", "SMALLINT", "TINYINT", "INTEGER", "LONG"):
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+        elif tname in ("FLOAT", "DOUBLE", "DECIMAL", "REAL"):
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    return df
 
 
 def filter_dietary(frame, restrictions, menu=False):
