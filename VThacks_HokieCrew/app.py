@@ -456,18 +456,18 @@ def find_health_resources(query: str) -> str:
 def find_events_and_clubs(query: str) -> str:
     """
     Find campus events, clubs, and cultural centers using Delta Lake tables:
-    - workspace.default.ii_campus_events (20 events)
-    - workspace.default.ii_student_clubs (25 clubs)
-    - workspace.default.ii_cultural_centers (12 cultural centers)
+    - workspace.default.campus_events_clean (20 events)
+    - workspace.default.student_clubs_clean (25 clubs)
+    - workspace.default.cultural_centers_clean (12 cultural centers)
     """
     import time as _time
     start = _time.time()
     
     try:
         import re
-        events_pdf = load_table("workspace.default.ii_campus_events")
-        clubs_pdf = load_table("workspace.default.ii_student_clubs")
-        centers_pdf = load_table("workspace.default.ii_cultural_centers")
+        events_pdf = load_table("workspace.default.campus_events_clean")
+        clubs_pdf = load_table("workspace.default.student_clubs_clean")
+        centers_pdf = load_table("workspace.default.cultural_centers_clean")
         
         query_lower = query.lower()
         query_words = set(re.findall(r'\b\w+\b', query_lower))
