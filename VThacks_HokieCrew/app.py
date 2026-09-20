@@ -50,7 +50,7 @@ def load_table(table_name):
         raise RuntimeError("SQL query timed out after 180s")
     # Convert to pandas DataFrame
     columns = [c.name for c in result.manifest.schema.columns]
-    col_types = [str(c.type_name).upper() for c in result.manifest.schema.columns]
+    col_types = [c.type_name.name if hasattr(c.type_name, 'name') else str(c.type_name).upper() for c in result.manifest.schema.columns]
     data = result.result.data_array if result.result and result.result.data_array else []
     rows = [list(row) for row in data]
     df = pd.DataFrame(rows, columns=columns)
