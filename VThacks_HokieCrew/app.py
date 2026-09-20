@@ -1182,7 +1182,7 @@ def test_table():
     import traceback
     try:
         df = load_table("workspace.default.food_menus")
-        return jsonify({"status": "ok", "rows": len(df), "columns": list(df.columns)[:5]})
+        return jsonify({"status": "ok", "version": "v6-tables-fixed", "rows": len(df), "columns": list(df.columns)[:5]})
     except Exception as e:
         return jsonify({"status": "error", "error": str(e), "traceback": traceback.format_exc()}), 500
 
