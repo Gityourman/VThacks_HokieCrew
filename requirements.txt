@@ -5,3 +5,4 @@ pandas>=2,<4
 elevenlabs>=2.68,<3
 psycopg2-binary>=2.9,<3
 requests>=2.31,<3
+gunicorn>=22,<24

@@ -18,7 +18,9 @@ from databricks.sdk.core import Config
 
 
 def load_table(table_name):
-    """Read Unity Catalog through a SQL warehouse, without a notebook Spark session."""
+    """Read Unity Catalog through a SQL warehouse.
+    Works on both Databricks Apps (OAuth) and Render (PAT token).
+    """
     import re
     from urllib.parse import urlparse
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){2}", table_name):
@@ -29,14 +31,29 @@ def load_table(table_name):
         http_path = f"/sql/1.0/warehouses/{warehouse_id}"
     if not http_path:
         raise RuntimeError("Configure DATABRICKS_WAREHOUSE_ID or DATABRICKS_HTTP_PATH for the app")
-    cfg = Config()
-    if not cfg.host:
-        raise RuntimeError("Configure DATABRICKS_HOST for the app")
-    host = urlparse(cfg.host if "://" in cfg.host else "https://" + cfg.host).netloc
+    # Resolve host: prefer explicit env var, fall back to Databricks SDK Config
+    host = os.getenv("DATABRICKS_HOST", "").replace("https://", "").replace("http://", "").rstrip("/")
+    access_token = os.getenv("DATABRICKS_TOKEN", "")
+    if not host or not access_token:
+        # Databricks Apps environment: use SDK Config (OAuth)
+        try:
+            cfg = Config()
+            if cfg.host:
+                host = urlparse(cfg.host if "://" in cfg.host else "https://" + cfg.host).netloc
+        except Exception:
+            pass
+    if not host:
+        raise RuntimeError("Configure DATABRICKS_HOST (and DATABRICKS_TOKEN for Render) for the app")
     identifier = ".".join(f"`{part}`" for part in table_name.split("."))
-    with sql.connect(server_hostname=host, http_path=http_path,
-                     credentials_provider=lambda: cfg.authenticate) as connection:
-        with connection.cursor() as cursor:
+    # On Render: use access_token directly. On Databricks Apps: use credentials_provider.
+    if access_token:
+        conn = sql.connect(server_hostname=host, http_path=http_path, access_token=access_token)
+    else:
+        cfg = Config()
+        conn = sql.connect(server_hostname=host, http_path=http_path,
+                           credentials_provider=lambda: cfg.authenticate)
+    with conn:
+        with conn.cursor() as cursor:
             cursor.execute(f"SELECT * FROM {identifier}")
             return pd.DataFrame.from_records(cursor.fetchall(),
                                              columns=[c[0] for c in cursor.description])

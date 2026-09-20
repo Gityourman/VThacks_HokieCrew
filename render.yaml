@@ -9,11 +9,15 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.12
-      - key: DATABRICKS_AUTH_TYPE
-        value: oauth-m2m
       - key: DATABRICKS_HOST
         sync: false
       - key: DATABRICKS_WAREHOUSE_ID
+        value: b8e09978c6080bb9
+      # Option A: PAT token (simpler) - generate from Databricks User Settings
+      - key: DATABRICKS_TOKEN
+        sync: false
+      # Option B: OAuth M2M (more secure) - requires service principal
+      - key: DATABRICKS_AUTH_TYPE
         sync: false
       - key: DATABRICKS_CLIENT_ID
         sync: false
