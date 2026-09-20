@@ -167,7 +167,6 @@ def recommend_bus_route(query: str) -> str:
         # Build response with Delta Lake data + Tiger Data real-time
         lines = []
         lines.append(f'Bus Recommendations for: "{query}"')
-        lines.append('=' * 60)
         lines.append('')
         
         for i, (score, r) in enumerate(top_routes, 1):
@@ -271,7 +270,6 @@ def recommend_food(query: str) -> str:
         
         lines = []
         lines.append(f'Food Recommendations for: "{query}"')
-        lines.append('=' * 60)
         if restrictions:
             lines.append(f'Dietary filters: {", ".join(restrictions)}')
         lines.append('')
@@ -349,7 +347,6 @@ def find_health_resources(query: str) -> str:
     query_lower = query.lower()
     lines = []
     lines.append(f'Health & Wellness for: "{query}"')
-    lines.append('=' * 60)
     lines.append('')
     
     # GYM OCCUPANCY from Tiger Data
@@ -477,7 +474,6 @@ def find_events_and_clubs(query: str) -> str:
         
         lines = []
         lines.append(f'Campus Life for: "{query}"')
-        lines.append('=' * 60)
         lines.append('')
         
         # ── Search events ──
@@ -571,7 +567,6 @@ def find_professional_resources(query: str) -> str:
         
         lines = []
         lines.append(f'Professional Resources for: "{query}"')
-        lines.append('=' * 60)
         lines.append('')
         
         # ── Research opportunities ──
