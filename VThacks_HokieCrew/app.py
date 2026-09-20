@@ -167,7 +167,7 @@ def recommend_bus_route(query: str) -> str:
         # Build response with Delta Lake data + Tiger Data real-time
         lines = []
         lines.append(f'Bus Recommendations for: "{query}"')
-        lines.append('')
+        # lines.append('')
         
         for i, (score, r) in enumerate(top_routes, 1):
             code = str(r.get("route_code", ""))
@@ -191,7 +191,7 @@ def recommend_bus_route(query: str) -> str:
             stops_str = ", ".join(str(s) for s in stops_list[:5]) if stops_list else "N/A"
             
             lines.append(f'#{i} Route {code} - {name}')
-            lines.append(f'   {desc}')
+            # lines.append(f'   {desc}')
             lines.append(f'   Service: {service} | Frequency: {freq}')
             lines.append(f'   Key stops: {stops_str}')
             
@@ -215,7 +215,7 @@ def recommend_bus_route(query: str) -> str:
                             lines.append(f'     Historical avg to {bus.get("next_stop", "")}: {avg_eta:.1f} min (last 24h)')
             else:
                 lines.append(f'   No buses currently active (check service hours)')
-            lines.append('')
+            # lines.append('')
         
         response = "\n".join(lines)
         
@@ -272,7 +272,7 @@ def recommend_food(query: str) -> str:
         lines.append(f'Food Recommendations for: "{query}"')
         if restrictions:
             lines.append(f'Dietary filters: {", ".join(restrictions)}')
-        lines.append('')
+        # lines.append('')
         
         # ── Search dining hall menus ──
         filtered = filter_dietary(menus_pdf, restrictions, menu=True)
@@ -287,14 +287,14 @@ def recommend_food(query: str) -> str:
             scored_items.sort(key=lambda x: x[0], reverse=True)
             
             lines.append(f'Dining Hall Options ({len(filtered)} items match):')
-            for i, (score, row) in enumerate(scored_items[:5], 1):
+            for i, (score, row) in enumerate(scored_items[:3], 1):
                 name = str(row.get('name', ''))
                 location = str(row.get('location_name', row.get('location', '')))
                 meal = str(row.get('meal', ''))
                 station = str(row.get('station', ''))
                 lines.append(f'  #{i} {name}')
                 lines.append(f'     {location} | {meal} | {station}')
-            lines.append('')
+            # lines.append('')
         
         # ── Search restaurants ──
         rest_filtered = filter_dietary(rest_pdf, restrictions)
@@ -310,14 +310,14 @@ def recommend_food(query: str) -> str:
             scored_rest.sort(key=lambda x: x[0], reverse=True)
             
             lines.append(f'Restaurant Options ({len(rest_filtered)} match):')
-            for i, (score, row) in enumerate(scored_rest[:5], 1):
+            for i, (score, row) in enumerate(scored_rest[:3], 1):
                 name = str(row.get('name', ''))
                 cuisine = str(row.get('cuisine', ''))
                 budget_val = str(row.get('budget', ''))
                 desc = str(row.get('description', ''))[:60]
                 lines.append(f'  #{i} {name} ({cuisine}) {budget_val}')
                 lines.append(f'     {desc}')
-            lines.append('')
+            # lines.append('')
         
         if filtered.empty and rest_filtered.empty:
             lines.append('No verified dietary matches available. Confirm dietary needs with the dining provider.')
@@ -347,13 +347,13 @@ def find_health_resources(query: str) -> str:
     query_lower = query.lower()
     lines = []
     lines.append(f'Health & Wellness for: "{query}"')
-    lines.append('')
+    # lines.append('')
     
     # GYM OCCUPANCY from Tiger Data
     if any(w in query_lower for w in ["gym", "mccomas", "workout", "fitness", "crowd", "busy", "occupancy", "war memorial"]):
         if tigerdata_conn:
             lines.append('Gym Occupancy (Tiger Data real-time):')
-            lines.append('')
+            # lines.append('')
             
             with tigerdata_conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
@@ -391,13 +391,13 @@ def find_health_resources(query: str) -> str:
                             for t in best_times
                         )
                         lines.append(f"  Least crowded: {times_str}")
-                    lines.append('')
+                    # lines.append('')
             else:
                 lines.append('  No occupancy data yet. Run Test_Tiger_Data notebook to populate.')
-                lines.append('')
+                # lines.append('')
         else:
             lines.append('  Tiger Data not connected. Gym occupancy unavailable.')
-            lines.append('')
+            # lines.append('')
     
     # HEALTH RESOURCES from Delta Lake (teammate Health_Helper notebook)
     if any(w in query_lower for w in ["counsel", "mental", "therapy", "wellness", "health", "sick", "medical", "doctor", "schiffert", "stress", "anxious", "depress", "flu", "vaccine", "prescription", "crisis"]):
@@ -416,13 +416,13 @@ def find_health_resources(query: str) -> str:
             
             if scored:
                 lines.append('Health Resources:')
-                for i, (score, row) in enumerate(scored[:5], 1):
+                for i, (score, row) in enumerate(scored[:3], 1):
                     name = str(row.get('name', ''))
                     cat = str(row.get('category', ''))
                     desc = str(row.get('description', ''))[:80]
                     lines.append(f'  #{i} {name} [{cat}]')
                     lines.append(f'     {desc}')
-                lines.append('')
+                # lines.append('')
             else:
                 # Fallback: show all resources
                 lines.append('Health Resources (showing all):')
@@ -431,12 +431,12 @@ def find_health_resources(query: str) -> str:
                     name = str(row.get('name', ''))
                     cat = str(row.get('category', ''))
                     lines.append(f'  #{i} {name} [{cat}]')
-                lines.append('')
+                # lines.append('')
         except Exception:
             # Fallback to basic info if Delta tables unavailable
             lines.append('Mental Health: Cook Counseling Center (540) 231-6557')
             lines.append('Medical: Schiffert Health Center (540) 231-6444')
-            lines.append('')
+            # lines.append('')
     
     if len(lines) <= 3:
         lines.append('I can help with:')
@@ -474,7 +474,7 @@ def find_events_and_clubs(query: str) -> str:
         
         lines = []
         lines.append(f'Campus Life for: "{query}"')
-        lines.append('')
+        # lines.append('')
         
         # ── Search events ──
         scored_events = []
@@ -486,7 +486,7 @@ def find_events_and_clubs(query: str) -> str:
         
         if scored_events and scored_events[0][0] > 0:
             lines.append(f'Events in the dataset ({len(scored_events)} total; check dates):')
-            for i, (score, row) in enumerate(scored_events[:4], 1):
+            for i, (score, row) in enumerate(scored_events[:3], 1):
                 name = str(row.get('name', ''))
                 category = str(row.get('category', ''))
                 date = str(row.get('date', ''))
@@ -494,7 +494,7 @@ def find_events_and_clubs(query: str) -> str:
                 location = str(row.get('location', ''))
                 lines.append(f'  #{i} {name} [{category}]')
                 lines.append(f'     {date} at {time_val} - {location}')
-            lines.append('')
+            # lines.append('')
         
         # ── Search clubs ──
         scored_clubs = []
@@ -506,13 +506,13 @@ def find_events_and_clubs(query: str) -> str:
         
         if scored_clubs and scored_clubs[0][0] > 0:
             lines.append(f'Student Clubs ({len(scored_clubs)} total):')
-            for i, (score, row) in enumerate(scored_clubs[:4], 1):
+            for i, (score, row) in enumerate(scored_clubs[:3], 1):
                 name = str(row.get('name', ''))
                 category = str(row.get('category', ''))
                 desc = str(row.get('description', ''))[:60]
                 lines.append(f'  #{i} {name} [{category}]')
                 lines.append(f'     {desc}')
-            lines.append('')
+            # lines.append('')
         
         # ── Search cultural centers ──
         scored_centers = []
@@ -528,7 +528,7 @@ def find_events_and_clubs(query: str) -> str:
                 name = str(row.get('name', ''))
                 location = str(row.get('location', ''))
                 lines.append(f'  #{i} {name} - {location}')
-            lines.append('')
+            # lines.append('')
         
         if len(lines) <= 3:
             lines.append('Try: "dance events", "cultural clubs", "Asian culture", "volunteer opportunities"')
@@ -567,7 +567,7 @@ def find_professional_resources(query: str) -> str:
         
         lines = []
         lines.append(f'Professional Resources for: "{query}"')
-        lines.append('')
+        # lines.append('')
         
         # ── Research opportunities ──
         scored_research = []
@@ -579,13 +579,13 @@ def find_professional_resources(query: str) -> str:
         
         if scored_research and scored_research[0][0] > 0:
             lines.append(f'Research Opportunities ({len(scored_research)} total):')
-            for i, (score, row) in enumerate(scored_research[:4], 1):
+            for i, (score, row) in enumerate(scored_research[:3], 1):
                 name = str(row.get('name', ''))
                 field = str(row.get('field', ''))
                 cat = str(row.get('category', ''))
                 lines.append(f'  #{i} {name} [{cat}]')
                 lines.append(f'     Field: {field}')
-            lines.append('')
+            # lines.append('')
         
         # ── Career resources ──
         scored_resources = []
@@ -597,13 +597,13 @@ def find_professional_resources(query: str) -> str:
         
         if scored_resources and scored_resources[0][0] > 0:
             lines.append(f'Career Resources ({len(scored_resources)} total):')
-            for i, (score, row) in enumerate(scored_resources[:4], 1):
+            for i, (score, row) in enumerate(scored_resources[:3], 1):
                 name = str(row.get('name', ''))
                 cat = str(row.get('category', ''))
                 desc = str(row.get('description', ''))[:60]
                 lines.append(f'  #{i} {name} [{cat}]')
                 lines.append(f'     {desc}')
-            lines.append('')
+            # lines.append('')
         
         # ── Career events ──
         scored_events = []
@@ -620,7 +620,7 @@ def find_professional_resources(query: str) -> str:
                 date = str(row.get('date_info', ''))
                 lines.append(f'  #{i} {name}')
                 lines.append(f'     {date}')
-            lines.append('')
+            # lines.append('')
         
         # ── Career pathways ──
         scored_pathways = []
@@ -635,7 +635,7 @@ def find_professional_resources(query: str) -> str:
             for i, (score, row) in enumerate(scored_pathways[:3], 1):
                 pathway = str(row.get('pathway', ''))
                 lines.append(f'  #{i} {pathway}')
-            lines.append('')
+            # lines.append('')
         
         if len(lines) <= 3:
             lines.append('Try: "research in biology", "resume help", "career fair", "internship opportunities"')
