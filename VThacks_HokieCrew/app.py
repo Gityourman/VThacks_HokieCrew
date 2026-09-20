@@ -12,12 +12,56 @@ import os
 import base64
 import json
 from flask import Flask, render_template_string, request, jsonify
-try:
-    from databricks.sdk.runtime import *
-except Exception:
-    spark = None
-    dbutils = None
 import pandas as pd
+from databricks import sql
+from databricks.sdk.core import Config
+
+
+def load_table(table_name):
+    """Read Unity Catalog through a SQL warehouse, without a notebook Spark session."""
+    import re
+    from urllib.parse import urlparse
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){2}", table_name):
+        raise ValueError("Expected a catalog.schema.table identifier")
+    http_path = os.getenv("DATABRICKS_HTTP_PATH")
+    warehouse_id = os.getenv("DATABRICKS_WAREHOUSE_ID")
+    if not http_path and warehouse_id:
+        http_path = f"/sql/1.0/warehouses/{warehouse_id}"
+    if not http_path:
+        raise RuntimeError("Configure DATABRICKS_WAREHOUSE_ID or DATABRICKS_HTTP_PATH for the app")
+    cfg = Config()
+    if not cfg.host:
+        raise RuntimeError("Configure DATABRICKS_HOST for the app")
+    host = urlparse(cfg.host if "://" in cfg.host else "https://" + cfg.host).netloc
+    identifier = ".".join(f"`{part}`" for part in table_name.split("."))
+    with sql.connect(server_hostname=host, http_path=http_path,
+                     credentials_provider=lambda: cfg.authenticate) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(f"SELECT * FROM {identifier}")
+            return pd.DataFrame.from_records(cursor.fetchall(),
+                                             columns=[c[0] for c in cursor.description])
+
+
+def filter_dietary(frame, restrictions, menu=False):
+    """Only claim a dietary match when the source has an explicit true flag."""
+    for restriction in restrictions:
+        column = ("is_" if menu else "") + restriction.replace("-", "_")
+        if column not in frame.columns:
+            return frame.iloc[0:0]
+        frame = frame[frame[column].eq(True).fillna(False)]
+    return frame
+
+
+def optional_number(value, integer=False):
+    """Keep missing/invalid telemetry missing instead of reporting a zero ETA."""
+    import math
+    try:
+        number = float(value)
+        if not math.isfinite(number):
+            return None
+        return int(number) if integer else number
+    except (ValueError, TypeError, OverflowError):
+        return None
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -26,31 +70,6 @@ app = Flask(__name__)
 # DATABRICKS TABLE ACCESS (works on both Databricks Apps and Render)
 # ============================================================================
 
-def query_table(table_name):
-    """Query a Databricks table and return as pandas DataFrame.
-    Uses spark if available (Databricks Apps), falls back to SQL connector (Render/other).
-    """
-    if spark is not None:
-        return spark.table(table_name).toPandas()
-
-    # Fallback: use Databricks SQL connector for non-Databricks environments (e.g. Render)
-    from databricks.sql import connect as sql_connect
-    server_hostname = os.environ.get("DATABRICKS_HOST", "").replace("https://", "").replace("http://", "").rstrip("/")
-    warehouse_id = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")
-    http_path = os.environ.get("DATABRICKS_HTTP_PATH", f"/sql/1.0/warehouses/{warehouse_id}" if warehouse_id else "")
-    access_token = os.environ.get("DATABRICKS_TOKEN", "")
-
-    if not server_hostname or not access_token or not http_path:
-        raise Exception("Databricks connection not configured. Set DATABRICKS_HOST, DATABRICKS_TOKEN, and DATABRICKS_WAREHOUSE_ID environment variables.")
-
-    connection = sql_connect(server_hostname=server_hostname, http_path=http_path, access_token=access_token)
-    cursor = connection.cursor()
-    cursor.execute(f"SELECT * FROM {table_name}")
-    result = cursor.fetchall()
-    columns = [desc[0] for desc in cursor.description] if cursor.description else []
-    cursor.close()
-    connection.close()
-    return pd.DataFrame(result, columns=columns)
 
 # ============================================================================
 # FEATURE IMPORTS
@@ -70,8 +89,8 @@ def recommend_bus_route(query: str) -> str:
     
     try:
         # Delta Lake: Get routes and vehicle positions
-        routes_df = query_table("workspace.vthacks.bt_routes_full")
-        positions_df = query_table("workspace.vthacks.bt_vehicle_positions")
+        routes_df = load_table("workspace.vthacks.bt_routes_full")
+        positions_df = load_table("workspace.vthacks.bt_vehicle_positions")
         
         # Tiger Data: Push current positions to time-series DB
         if tigerdata_conn:
@@ -80,11 +99,11 @@ def recommend_bus_route(query: str) -> str:
                     vehicle_id=str(v.get("vehicle_id", "")),
                     route_code=str(v.get("route_code", "")),
                     route_name=str(v.get("route_name", "")),
-                    lat=float(v.get("latitude", 0)),
-                    lon=float(v.get("longitude", 0)),
+                    lat=optional_number(v.get("latitude")),
+                    lon=optional_number(v.get("longitude")),
                     current_stop=str(v.get("current_stop", "")),
                     next_stop=str(v.get("next_stop", "")),
-                    eta_min=int(v.get("eta_next_stop_min", 0)),
+                    eta_min=optional_number(v.get("eta_next_stop_min"), integer=True),
                     speed=0.0
                 )
         
@@ -144,6 +163,8 @@ def recommend_bus_route(query: str) -> str:
                     stops_list = ast.literal_eval(str(stops))
                 except:
                     stops_list = str(stops).split(",")
+            if not isinstance(stops_list, (list, tuple)):
+                stops_list = [] if stops_list is None else [stops_list]
             stops_str = ", ".join(str(s) for s in stops_list[:5]) if stops_list else "N/A"
             
             lines.append(f'#{i} Route {code} - {name}')
@@ -159,8 +180,9 @@ def recommend_bus_route(query: str) -> str:
                     bus_id = str(bus.get("vehicle_id", ""))
                     curr = str(bus.get("current_stop", ""))
                     nxt = str(bus.get("next_stop", ""))
-                    eta = int(bus.get("eta_next_stop_min", 0))
-                    lines.append(f'     Bus {bus_id}: at {curr} -> {nxt} | ETA: {eta} min')
+                    eta = optional_number(bus.get("eta_next_stop_min"), integer=True)
+                    eta_text = f'{eta} min' if eta is not None else 'unavailable'
+                    lines.append(f'     Bus {bus_id}: at {curr} -> {nxt} | ETA: {eta_text}')
                 
                 # Tiger Data: Get historical average ETA
                 if tigerdata_conn:
@@ -183,7 +205,7 @@ def recommend_bus_route(query: str) -> str:
     except Exception as e:
         elapsed_ms = int((_time.time() - start) * 1000)
         track_query_performance("bus", elapsed_ms, "delta+tigerdata", False)
-        return f"Bus recommendation error: {str(e)}"
+        raise RuntimeError("Campus data lookup failed") from e
 
 # Feature 2: Food Info-Giver - queries Delta Lake tables from teammate notebook
 def recommend_food(query: str) -> str:
@@ -198,9 +220,8 @@ def recommend_food(query: str) -> str:
     
     try:
         import re
-        menus_pdf = query_table("workspace.default.food_menus")
-        halls_pdf = query_table("workspace.default.dining_halls")
-        rest_pdf = query_table("workspace.default.restaurants")
+        menus_pdf = load_table("workspace.default.food_menus")
+        rest_pdf = load_table("workspace.default.restaurants")
         
         query_lower = query.lower()
         query_words = set(re.findall(r'\b\w+\b', query_lower))
@@ -214,7 +235,7 @@ def recommend_food(query: str) -> str:
         }
         restrictions = []
         for diet, keywords in dietary_keywords.items():
-            if any(kw in query_lower for kw in keywords):
+            if any(re.search(r'\b' + re.escape(kw) + r'\b', query_lower) for kw in keywords):
                 restrictions.append(diet)
         
         # Detect budget
@@ -232,11 +253,7 @@ def recommend_food(query: str) -> str:
         lines.append('')
         
         # ── Search dining hall menus ──
-        filtered = menus_pdf
-        for r in restrictions:
-            col = r.replace('-', '_')
-            if col in filtered.columns:
-                filtered = filtered[filtered[col] == True]
+        filtered = filter_dietary(menus_pdf, restrictions, menu=True)
         
         if len(filtered) > 0:
             # Score by keyword matches
@@ -258,11 +275,7 @@ def recommend_food(query: str) -> str:
             lines.append('')
         
         # ── Search restaurants ──
-        rest_filtered = rest_pdf
-        for r in restrictions:
-            col = r.replace('-', '_')
-            if col in rest_filtered.columns:
-                rest_filtered = rest_filtered[rest_filtered[col] == True]
+        rest_filtered = filter_dietary(rest_pdf, restrictions)
         if budget and 'budget' in rest_filtered.columns:
             rest_filtered = rest_filtered[rest_filtered['budget'] == budget]
         
@@ -284,6 +297,8 @@ def recommend_food(query: str) -> str:
                 lines.append(f'     {desc}')
             lines.append('')
         
+        if filtered.empty and rest_filtered.empty:
+            lines.append('No verified dietary matches available. Confirm dietary needs with the dining provider.')
         if len(lines) <= 3:
             lines.append('No specific matches found. Try: "vegan food", "pizza", "gluten-free options"')
         
@@ -295,7 +310,7 @@ def recommend_food(query: str) -> str:
     except Exception as e:
         elapsed_ms = int((_time.time() - start) * 1000)
         track_query_performance("food", elapsed_ms, "delta", False)
-        return f"Food recommendation error: {str(e)}"
+        raise RuntimeError("Campus data lookup failed") from e
 
 # Feature 3: Health Helper - queries Tiger Data for gym occupancy + Delta for resources
 def find_health_resources(query: str) -> str:
@@ -367,7 +382,7 @@ def find_health_resources(query: str) -> str:
     if any(w in query_lower for w in ["counsel", "mental", "therapy", "wellness", "health", "sick", "medical", "doctor", "schiffert", "stress", "anxious", "depress", "flu", "vaccine", "prescription", "crisis"]):
         try:
             import re
-            health_pdf = query_table("workspace.default.health_resources")
+            health_pdf = load_table("workspace.default.health_resources")
             query_words = set(re.findall(r'\b\w+\b', query_lower))
             
             scored = []
@@ -420,18 +435,18 @@ def find_health_resources(query: str) -> str:
 def find_events_and_clubs(query: str) -> str:
     """
     Find campus events, clubs, and cultural centers using Delta Lake tables:
-    - workspace.default.campus_events_clean (20 events)
-    - workspace.default.student_clubs_clean (25 clubs)
-    - workspace.default.cultural_centers_clean (12 cultural centers)
+    - workspace.default.ii_campus_events (20 events)
+    - workspace.default.ii_student_clubs (25 clubs)
+    - workspace.default.ii_cultural_centers (12 cultural centers)
     """
     import time as _time
     start = _time.time()
     
     try:
         import re
-        events_pdf = query_table("workspace.default.campus_events_clean")
-        clubs_pdf = query_table("workspace.default.student_clubs_clean")
-        centers_pdf = query_table("workspace.default.cultural_centers_clean")
+        events_pdf = load_table("workspace.default.ii_campus_events")
+        clubs_pdf = load_table("workspace.default.ii_student_clubs")
+        centers_pdf = load_table("workspace.default.ii_cultural_centers")
         
         query_lower = query.lower()
         query_words = set(re.findall(r'\b\w+\b', query_lower))
@@ -450,7 +465,7 @@ def find_events_and_clubs(query: str) -> str:
         scored_events.sort(key=lambda x: x[0], reverse=True)
         
         if scored_events and scored_events[0][0] > 0:
-            lines.append(f'Upcoming Events ({len(scored_events)} total):')
+            lines.append(f'Events in the dataset ({len(scored_events)} total; check dates):')
             for i, (score, row) in enumerate(scored_events[:4], 1):
                 name = str(row.get('name', ''))
                 category = str(row.get('category', ''))
@@ -506,7 +521,7 @@ def find_events_and_clubs(query: str) -> str:
     except Exception as e:
         elapsed_ms = int((_time.time() - start) * 1000)
         track_query_performance("events", elapsed_ms, "delta", False)
-        return f"Events query error: {str(e)}"
+        raise RuntimeError("Campus data lookup failed") from e
 
 # Feature 5: Professional Helper - queries Delta Lake tables from teammate notebook
 def find_professional_resources(query: str) -> str:
@@ -522,10 +537,10 @@ def find_professional_resources(query: str) -> str:
     
     try:
         import re
-        research_pdf = query_table("workspace.default.research_opportunities")
-        resources_pdf = query_table("workspace.default.career_resources")
-        events_pdf = query_table("workspace.default.career_events")
-        pathways_pdf = query_table("workspace.default.career_pathways")
+        research_pdf = load_table("workspace.default.research_opportunities")
+        resources_pdf = load_table("workspace.default.career_resources")
+        events_pdf = load_table("workspace.default.career_events")
+        pathways_pdf = load_table("workspace.default.career_pathways")
         
         query_lower = query.lower()
         query_words = set(re.findall(r'\b\w+\b', query_lower))
@@ -614,7 +629,7 @@ def find_professional_resources(query: str) -> str:
     except Exception as e:
         elapsed_ms = int((_time.time() - start) * 1000)
         track_query_performance("professional", elapsed_ms, "delta", False)
-        return f"Professional resources error: {str(e)}"
+        raise RuntimeError("Campus data lookup failed") from e
 
 # ============================================================================
 # ELEVENLABS VOICE INTEGRATION
@@ -642,17 +657,18 @@ GEMINI_AVAILABLE = True  # requests is always available
 # Initialize ElevenLabs client
 # TODO: Set your ElevenLabs API key
 # Get it from: https://elevenlabs.io/sign-up (free tier available)
-ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "sk_85d6188fb750031100e48b4c9bfd641bef8d6cca28b49ec3")
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
 
 if ELEVENLABS_API_KEY and ELEVENLABS_AVAILABLE:
     elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
 else:
     elevenlabs_client = None
     print("⚠️ ElevenLabs API key not set. Voice features will be disabled.")
-    print("   Set ELEVENLABS_API_KEY environment variable or hardcode it above.")
+    print("   Set ELEVENLABS_API_KEY environment variable.")
 
 # Initialize Gemini via REST API (no library dependency)
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6JyGU3QswVRN6fqD983VfIMoYDzftVGivZDQr3_2RPfNw")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
 def gemini_generate(prompt: str) -> str:
     """Call Gemini API via REST. Returns generated text or None on error."""
@@ -660,8 +676,8 @@ def gemini_generate(prompt: str) -> str:
         return None
     try:
         import requests as _req
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
-        resp = _req.post(url, json={
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+        resp = _req.post(url, headers={"x-goog-api-key": GEMINI_API_KEY}, json={
             "contents": [{"parts": [{"text": prompt}]}]
         }, timeout=10)
         if resp.status_code == 200:
@@ -681,12 +697,13 @@ gemini_model = GEMINI_API_KEY  # Truthy if key is set
 # Tiger Data = PostgreSQL optimized for time-series data
 # Use for: Real-time bus tracking, gym occupancy trends, query performance
 
-TIGERDATA_URL = os.environ.get("TIGERDATA_URL", "postgres://tsdbadmin:e8x2yz8rlrafokn2@wu00rbek8w.wpv5i950k6.tsdb.cloud.timescale.com:37733/tsdb?sslmode=require")
+TIGERDATA_URL = os.environ.get("TIGERDATA_URL", "")
 tigerdata_conn = None
 
 if TIGERDATA_URL and TIGERDATA_AVAILABLE:
     try:
         tigerdata_conn = psycopg2.connect(TIGERDATA_URL, connect_timeout=5)
+        tigerdata_conn.autocommit = True  # A failed optional statement must not poison later queries.
         print("✅ Connected to Tiger Data (Timescale)")
         
         # Initialize hypertables for time-series data
@@ -795,7 +812,7 @@ def get_bus_positions_last_n_minutes(minutes=5):
         with tigerdata_conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
                 SELECT * FROM bus_positions_realtime
-                WHERE time >= NOW() - INTERVAL '%s minutes'
+                WHERE time >= NOW() - %s * INTERVAL '1 minute'
                 ORDER BY time DESC
             """, (minutes,))
             return cur.fetchall()
@@ -815,7 +832,7 @@ def get_average_eta_for_route(route_code, stop_name, hours_back=24):
                 FROM bus_positions_realtime
                 WHERE route_code = %s 
                   AND next_stop = %s
-                  AND time >= NOW() - INTERVAL '%s hours'
+                  AND time >= NOW() - %s * INTERVAL '1 hour'
             """, (route_code, stop_name, hours_back))
             result = cur.fetchone()
             return result[0] if result and result[0] else None
@@ -860,7 +877,7 @@ def get_gym_occupancy_pattern(facility_name, day_of_week=None):
                   AND time >= NOW() - INTERVAL '30 days'
             """
             
-            if day_of_week:
+            if day_of_week is not None:
                 query += " AND EXTRACT(DOW FROM time) = %s"
                 cur.execute(query + " GROUP BY EXTRACT(HOUR FROM time) ORDER BY hour",
                           (facility_name, day_of_week))
@@ -902,11 +919,11 @@ def transcribe_audio(audio_base64: str) -> str:
         Transcribed text
     """
     if not elevenlabs_client:
-        return "[Voice input disabled - set ELEVENLABS_API_KEY]"
+        raise RuntimeError("Voice input unavailable: configure ELEVENLABS_API_KEY")
     
     try:
         # Decode base64 audio
-        audio_bytes = base64.b64decode(audio_base64)
+        audio_bytes = base64.b64decode(audio_base64, validate=True)
         
         # Call ElevenLabs speech-to-text API (scribe_v1 model)
         import io
@@ -915,9 +932,12 @@ def transcribe_audio(audio_base64: str) -> str:
             model_id="scribe_v1",
             file_format="other",  # MP3/webm from browser mic
         )
-        return result.text
+        text = getattr(result, "text", None)
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("No speech was recognized")
+        return text.strip()
     except Exception as e:
-        return f"[Transcription error: {str(e)}]"
+        raise RuntimeError("Could not transcribe the recording. Please try again or type your question.") from e
 
 def text_to_speech(text: str) -> str:
     """
@@ -1013,6 +1033,9 @@ Respond with ONLY the category name, nothing else.
                 "Try asking: 'How do I get to Walmart?' or 'Where can I eat vegetarian food?'"
             )
         
+        if "food" in category or "dining" in category:
+            return response
+
         # Use Gemini to make the response more conversational
         enhancement_prompt = f"""
 You are a friendly VT campus assistant. Take this technical response and make it more conversational and student-friendly. Keep all the factual information but make it sound natural and helpful.
@@ -1095,23 +1118,32 @@ def home():
 @app.route("/api/query", methods=["POST"])
 def handle_query():
     """Handle text or voice queries"""
-    data = request.json
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Send a JSON object"}), 400
     query_type = data.get("type", "text")
-    
+    if query_type not in ("text", "voice"):
+        return jsonify({"error": "Unknown query type"}), 400
     if query_type == "voice":
-        # Voice input - transcribe first
-        audio_base64 = data.get("audio", "")
-        query_text = transcribe_audio(audio_base64)
+        recording = data.get("audio")
+        if not isinstance(recording, str) or not recording.strip():
+            return jsonify({"error": "No recording provided"}), 400
+        try:
+            query_text = transcribe_audio(recording)
+        except RuntimeError as exc:
+            app.logger.exception("Voice transcription failed")
+            return jsonify({"error": str(exc)}), 502
     else:
-        # Text input
-        query_text = data.get("query", "")
-    
-    if not query_text:
-        return jsonify({"error": "No query provided"}), 400
-    
-    # Route to appropriate feature
-    response_text = route_query(query_text)
-    
+        query_text = data.get("query")
+    if not isinstance(query_text, str) or not query_text.strip():
+        return jsonify({"error": "Provide a non-empty text query"}), 400
+    query_text = query_text.strip()
+    try:
+        response_text = route_query(query_text)
+    except Exception:
+        app.logger.exception("Query failed")
+        return jsonify({"error": "Campus data is temporarily unavailable. Please try again."}), 503
+
     # Convert response to speech if requested
     audio_base64 = ""
     if data.get("want_audio", False):
@@ -1143,7 +1175,7 @@ def health_check():
         "architecture": {
             "data_platform": "Databricks Delta Lake",
             "realtime_db": "Tiger Data (Timescale)" if tigerdata_conn else "Delta Lake only",
-            "ai_brain": "Gemini 3.6 Flash (REST API)" if gemini_model else "Keyword matching",
+            "ai_brain": GEMINI_MODEL if gemini_model else "Keyword matching",
             "voice_io": "ElevenLabs" if elevenlabs_client else "Text only"
         }
     })
@@ -1162,7 +1194,7 @@ def realtime_buses():
                     vehicle_id, route_code, route_name, latitude, longitude,
                     current_stop, next_stop, eta_minutes, time
                 FROM bus_positions_realtime
-                WHERE time >= NOW() - INTERVAL '%s minutes'
+                WHERE time >= NOW() - %s * INTERVAL '1 minute'
                 ORDER BY vehicle_id, time DESC
             """, (minutes,))
             positions = cur.fetchall()
@@ -1479,6 +1511,7 @@ HTML_TEMPLATE = '''
                 });
                 
                 const data = await response.json();
+                if (!response.ok || data.error) throw new Error(data.error || 'Request failed');
                 
                 // Add assistant response
                 addMessage('assistant', data.response);
@@ -1509,7 +1542,8 @@ HTML_TEMPLATE = '''
                     };
                     
                     mediaRecorder.onstop = async () => {
-                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
+                        stream.getTracks().forEach(track => track.stop());
                         const reader = new FileReader();
                         reader.readAsDataURL(audioBlob);
                         reader.onloadend = async () => {
@@ -1550,6 +1584,7 @@ HTML_TEMPLATE = '''
                 });
                 
                 const data = await response.json();
+                if (!response.ok || data.error) throw new Error(data.error || 'Request failed');
                 
                 // Add transcribed query
                 addMessage('user', data.query);
