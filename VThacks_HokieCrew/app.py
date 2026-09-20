@@ -1181,6 +1181,16 @@ def handle_query():
         "audio": audio_base64
     })
 
+@app.route("/api/test")
+def test_table():
+    """Direct test of load_table to debug connection issues."""
+    import traceback
+    try:
+        df = load_table("workspace.default.food_menus")
+        return jsonify({"status": "ok", "rows": len(df), "columns": list(df.columns)[:5]})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e), "traceback": traceback.format_exc()}), 500
+
 @app.route("/health")
 def health_check():
     """Health check endpoint"""
