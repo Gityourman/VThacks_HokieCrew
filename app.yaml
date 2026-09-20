@@ -1,12 +1,5 @@
 command: ["python", "VThacks_HokieCrew/app.py"]
 
-# Add these resources in the Databricks Apps UI before deploying.
 env:
   - name: DATABRICKS_WAREHOUSE_ID
-    valueFrom: sql-warehouse
-  - name: ELEVENLABS_API_KEY
-    valueFrom: elevenlabs-api-key
-  - name: GEMINI_API_KEY
-    valueFrom: gemini-api-key
-  - name: TIGERDATA_URL
-    valueFrom: tigerdata-url
+    value: "b8e09978c6080bb9"
