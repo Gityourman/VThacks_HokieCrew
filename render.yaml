@@ -10,18 +10,10 @@ services:
       - key: PYTHON_VERSION
         value: 3.12.12
       - key: DATABRICKS_HOST
-        sync: false
+        value: https://dbc-2f59dc3b-5b06.cloud.databricks.com
       - key: DATABRICKS_WAREHOUSE_ID
         value: b8e09978c6080bb9
-      # Option A: PAT token (simpler) - generate from Databricks User Settings
       - key: DATABRICKS_TOKEN
-        sync: false
-      # Option B: OAuth M2M (more secure) - requires service principal
-      - key: DATABRICKS_AUTH_TYPE
-        sync: false
-      - key: DATABRICKS_CLIENT_ID
-        sync: false
-      - key: DATABRICKS_CLIENT_SECRET
         sync: false
       - key: ELEVENLABS_API_KEY
         sync: false
