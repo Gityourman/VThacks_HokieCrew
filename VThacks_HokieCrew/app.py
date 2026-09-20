@@ -1301,6 +1301,57 @@ HTML_TEMPLATE = '''
             padding: 20px;
         }
         
+        .main-layout {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+            max-width: 1050px;
+            width: 100%;
+        }
+        
+        .bird-panel {
+            flex-shrink: 0;
+            width: 320px;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .bird-panel h3 {
+            color: #630031;
+            margin-bottom: 5px;
+            font-size: 1.1em;
+        }
+        
+        .bird-panel p {
+            color: #999;
+            font-size: 0.8em;
+            margin-bottom: 10px;
+        }
+        
+        #birdCanvas {
+            border-radius: 15px;
+            background: #faf5f0;
+        }
+        
+        .bird-status {
+            margin-top: 8px;
+            font-size: 0.85em;
+            color: #630031;
+            font-weight: bold;
+        }
+        
+        .chat-wrapper {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
         .header {
             text-align: center;
             color: white;
@@ -1453,10 +1504,21 @@ HTML_TEMPLATE = '''
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>🏫 VT Campus Life Assistant</h1>
-        <p>Powered by Databricks, Gemini AI & ElevenLabs Voice</p>
-    </div>
+    <div class="main-layout">
+        <!-- Talking Hokie Bird Panel (left side) -->
+        <div class="bird-panel">
+            <h3>🦃 Hokie Assistant</h3>
+            <p>Listening & Responding</p>
+            <canvas id="birdCanvas" width="290" height="380"></canvas>
+            <div class="bird-status" id="birdStatus">Ready</div>
+        </div>
+        
+        <!-- Chat Panel (right side) -->
+        <div class="chat-wrapper">
+            <div class="header">
+                <h1>🏫 VT Campus Life Assistant</h1>
+                <p>Powered by Databricks, Gemini AI & ElevenLabs Voice</p>
+            </div>
     
     <div class="chat-container">
         <div class="chat-messages" id="chatMessages">
@@ -1483,8 +1545,153 @@ HTML_TEMPLATE = '''
         <div class="feature-tag">🎉 Events & Clubs</div>
         <div class="feature-tag">Professional</div>
     </div>
+        </div> <!-- close chat-wrapper -->
+    </div> <!-- close main-layout -->
     
     <script>
+        // ============================================================================
+        // TALKING HOKIE BIRD - Canvas Animation
+        // ============================================================================
+        const birdCanvas = document.getElementById('birdCanvas');
+        const bctx = birdCanvas.getContext('2d');
+        const birdStatus = document.getElementById('birdStatus');
+        let birdMouth = 0;       // current mouth open amount (0..1)
+        let birdMouthTarget = 0; // target mouth open amount
+        let birdSpeaking = false;
+        let birdIdleTime = 0;
+        
+        function drawBird() {
+            const w = birdCanvas.width, h = birdCanvas.height;
+            bctx.clearRect(0, 0, w, h);
+            const cx = w / 2, cy = h / 2 + 20;
+            
+            // Body (maroon ellipse)
+            bctx.fillStyle = '#7f1f24';
+            bctx.beginPath();
+            bctx.ellipse(cx, cy + 40, 90, 70, 0, 0, Math.PI * 2);
+            bctx.fill();
+            
+            // Belly (lighter)
+            bctx.fillStyle = '#983a3f';
+            bctx.beginPath();
+            bctx.ellipse(cx, cy + 50, 55, 45, 0, 0, Math.PI * 2);
+            bctx.fill();
+            
+            // Wings
+            bctx.fillStyle = '#6f2429';
+            bctx.beginPath(); bctx.moveTo(cx - 85, cy + 30); bctx.lineTo(cx - 50, cy + 10); bctx.lineTo(cx - 60, cy + 60); bctx.fill();
+            bctx.beginPath(); bctx.moveTo(cx + 85, cy + 30); bctx.lineTo(cx + 50, cy + 10); bctx.lineTo(cx + 60, cy + 60); bctx.fill();
+            
+            // Head (maroon circle)
+            bctx.fillStyle = '#7f1f24';
+            bctx.beginPath();
+            bctx.arc(cx, cy - 30, 65, 0, Math.PI * 2);
+            bctx.fill();
+            bctx.strokeStyle = '#4f1f24';
+            bctx.lineWidth = 3;
+            bctx.stroke();
+            
+            // Eyes (white with dark pupils)
+            const eyeY = cy - 48;
+            [-18, 18].forEach(dx => {
+                bctx.fillStyle = 'white';
+                bctx.beginPath(); bctx.arc(cx + dx, eyeY, 11, 0, Math.PI * 2); bctx.fill();
+                bctx.fillStyle = '#1b0f10';
+                bctx.beginPath(); bctx.arc(cx + dx + 3, eyeY, 5, 0, Math.PI * 2); bctx.fill();
+            });
+            
+            // Eyebrows
+            bctx.strokeStyle = '#2b0e0f';
+            bctx.lineWidth = 4;
+            bctx.beginPath(); bctx.moveTo(cx - 30, eyeY - 15); bctx.lineTo(cx - 8, eyeY - 20); bctx.stroke();
+            bctx.beginPath(); bctx.moveTo(cx + 8, eyeY - 20); bctx.lineTo(cx + 30, eyeY - 12); bctx.stroke();
+            
+            // Beak pivot point
+            const px = cx + 58, py = cy - 18;
+            
+            // Upper beak (static - orange triangle)
+            bctx.fillStyle = '#e87720';
+            bctx.beginPath();
+            bctx.moveTo(px, py); bctx.lineTo(px + 55, py - 10); bctx.lineTo(px + 28, py + 6); bctx.closePath();
+            bctx.fill();
+            bctx.strokeStyle = '#261313';
+            bctx.lineWidth = 2; bctx.stroke();
+            
+            // Lower beak (rotates open based on mouth amount)
+            const angle = birdMouth * 0.5; // max ~28 degrees in radians
+            const lowerPts = [[px, py], [px + 28, py + 8], [px + 55, py + 12], [px, py + 14]];
+            const rad = angle;
+            const cosR = Math.cos(rad), sinR = Math.sin(rad);
+            bctx.fillStyle = '#f39b3c';
+            bctx.beginPath();
+            lowerPts.forEach((pt, i) => {
+                const dx = pt[0] - px, dy = pt[1] - py;
+                const rx = px + dx * cosR - dy * sinR;
+                const ry = py + dx * sinR + dy * cosR;
+                if (i === 0) bctx.moveTo(rx, ry); else bctx.lineTo(rx, ry);
+            });
+            bctx.closePath();
+            bctx.fill();
+            bctx.strokeStyle = '#261313';
+            bctx.lineWidth = 2; bctx.stroke();
+            
+            // Snood (red wattle)
+            bctx.fillStyle = '#d04b5f';
+            bctx.beginPath(); bctx.arc(cx + 42, cy - 8, 8, 0, Math.PI * 2); bctx.fill();
+            
+            // Idle blink animation
+            if (!birdSpeaking && Math.sin(birdIdleTime * 0.5) > 0.95) {
+                bctx.fillStyle = '#7f1f24';
+                [-18, 18].forEach(dx => {
+                    bctx.fillRect(cx + dx - 12, eyeY - 12, 24, 3);
+                });
+            }
+        }
+        
+        function animateBird(dt) {
+            birdIdleTime += dt;
+            // Smooth mouth toward target
+            birdMouth += (birdMouthTarget - birdMouth) * Math.min(1, dt / 80);
+            
+            if (birdSpeaking) {
+                // Random mouth movement while speaking (viseme-like)
+                birdMouthTarget = 0.2 + Math.random() * 0.7;
+            } else {
+                // Idle: slight breathing movement
+                birdMouthTarget = 0.05 + Math.sin(birdIdleTime * 0.8) * 0.03;
+            }
+            drawBird();
+        }
+        
+        let lastBirdTime = performance.now();
+        function birdLoop(now) {
+            const dt = now - lastBirdTime;
+            lastBirdTime = now;
+            animateBird(dt);
+            requestAnimationFrame(birdLoop);
+        }
+        requestAnimationFrame(birdLoop);
+        
+        function setBirdSpeaking(speaking) {
+            birdSpeaking = speaking;
+            birdStatus.textContent = speaking ? 'Speaking...' : 'Ready';
+            birdStatus.style.color = speaking ? '#cf4520' : '#630031';
+        }
+        
+        // Hook into audio playback for ElevenLabs
+        const origPlayAudio = typeof playAudio === 'function' ? playAudio : null;
+        function playAudioWithBird(base64Audio) {
+            const audio = new Audio('data:audio/mp3;base64,' + base64Audio);
+            setBirdSpeaking(true);
+            audio.onended = () => setBirdSpeaking(false);
+            audio.play();
+        }
+        
+        // Hook into speechSynthesis for browser TTS
+        const origSpeakText = typeof speakText === 'function' ? speakText : null;
+        
+        // ============================================================================
+        
         let isRecording = false;
         let mediaRecorder = null;
         let audioChunks = [];
@@ -1626,6 +1833,8 @@ HTML_TEMPLATE = '''
                 const utterance = new SpeechSynthesisUtterance(text);
                 utterance.rate = 1.0;
                 utterance.pitch = 1.0;
+                utterance.onstart = () => setBirdSpeaking(true);
+                utterance.onend = () => setBirdSpeaking(false);
                 speechSynthesis.speak(utterance);
             }
         }
@@ -1688,6 +1897,8 @@ HTML_TEMPLATE = '''
         // Play audio response
         function playAudio(base64Audio) {
             const audio = new Audio('data:audio/mp3;base64,' + base64Audio);
+            setBirdSpeaking(true);
+            audio.onended = () => setBirdSpeaking(false);
             audio.play();
         }
         
