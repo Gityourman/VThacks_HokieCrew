@@ -1,0 +1,57 @@
+# Databricks App Configuration
+# VThacks Campus Life Intelligence Hub
+
+name: vt-campus-life-assistant
+
+# App description
+description: |
+  VT Campus Life Intelligence Hub - AI-powered assistant for Virginia Tech students
+  Features: Bus routes, dining options, gym/health resources, and campus events
+  Powered by Databricks, Gemini AI, ElevenLabs voice & Tiger Data real-time tracking
+
+# Entry point
+command:
+  - "python"
+  - "app.py"
+
+# Environment configuration
+env:
+  # ElevenLabs API key (get from https://elevenlabs.io)
+  # Set this in Databricks Secrets or directly here
+  - name: ELEVENLABS_API_KEY
+    value: "sk_85d6188fb750031100e48b4c9bfd641bef8d6cca28b49ec3"
+    # Alternative: use Databricks Secrets
+    # value: "${secrets/vthacks/elevenlabs_api_key}"
+  
+  # Gemini API key (get from https://aistudio.google.com/app/apikey)
+  - name: GEMINI_API_KEY
+    value: "AQ.Ab8RN6JyGU3QswVRN6fqD983VfIMoYDzftVGivZDQr3_2RPfNw"
+    # Alternative: use Databricks Secrets
+    # value: "${secrets/vthacks/gemini_api_key}"
+  
+  # Tiger Data (Timescale) connection for real-time tracking
+  - name: TIGERDATA_URL
+    value: "postgres://tsdbadmin:e8x2yz8rlrafokn2@wu00rbek8w.wpv5i950k6.tsdb.cloud.timescale.com:37733/tsdb?sslmode=require"
+
+# Python dependencies
+requirements:
+  - flask>=2.3.0
+  - databricks-sdk>=0.20.0
+  - pandas>=2.0.0
+  - elevenlabs>=0.2.0
+  - psycopg2-binary>=2.9.0
+  - requests>=2.31.0
+
+# Resource configuration
+resources:
+  cpu: "2"
+  memory: "4Gi"
+
+# Port configuration
+port: 8000
+
+# Health check
+health_check:
+  path: "/health"
+  interval: 30
+  timeout: 10
