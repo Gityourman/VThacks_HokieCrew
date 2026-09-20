@@ -1552,9 +1552,11 @@ HTML_TEMPLATE = '''
                 // Add assistant response
                 addMessage('assistant', data.response);
                 
-                // Play audio if available
+                // Play audio if available (ElevenLabs), otherwise use browser TTS
                 if (data.audio) {
                     playAudio(data.audio);
+                } else {
+                    speakText(data.response);
                 }
             } catch (error) {
                 addMessage('assistant', '⚠️ Error: ' + error.message);
@@ -1563,20 +1565,44 @@ HTML_TEMPLATE = '''
             }
         }
         
-        // Toggle voice recording
+        // Toggle voice recording - uses browser SpeechRecognition if available, falls back to MediaRecorder + ElevenLabs
         async function toggleVoiceInput() {
             const btn = document.getElementById('voiceBtn');
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             
-            if (!isRecording) {
+            if (SpeechRecognition && !isRecording) {
+                // Browser-based speech recognition (no API key needed)
+                const recognition = new SpeechRecognition();
+                recognition.lang = 'en-US';
+                recognition.interimResults = false;
+                recognition.maxAlternatives = 1;
+                isRecording = true;
+                btn.classList.add('recording');
+                btn.textContent = '⏹️';
+                recognition.onresult = (event) => {
+                    const transcript = event.results[0][0].transcript;
+                    addMessage('user', transcript);
+                    sendQueryText(transcript);
+                };
+                recognition.onerror = (event) => {
+                    addMessage('assistant', '⚠️ Voice error: ' + event.error + '. Try typing instead.');
+                };
+                recognition.onend = () => {
+                    isRecording = false;
+                    btn.classList.remove('recording');
+                    btn.textContent = '🎤';
+                };
+                recognition.start();
+                return;
+            }
+            
+            if (!SpeechRecognition && !isRecording) {
+                // Fall back to MediaRecorder + ElevenLabs backend transcription
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     mediaRecorder = new MediaRecorder(stream);
                     audioChunks = [];
-                    
-                    mediaRecorder.ondataavailable = (event) => {
-                        audioChunks.push(event.data);
-                    };
-                    
+                    mediaRecorder.ondataavailable = (event) => { audioChunks.push(event.data); };
                     mediaRecorder.onstop = async () => {
                         const audioBlob = new Blob(audioChunks, { type: mediaRecorder.mimeType });
                         stream.getTracks().forEach(track => track.stop());
@@ -1587,7 +1613,6 @@ HTML_TEMPLATE = '''
                             await sendVoiceQuery(base64Audio);
                         };
                     };
-                    
                     mediaRecorder.start();
                     isRecording = true;
                     btn.classList.add('recording');
@@ -1595,11 +1620,44 @@ HTML_TEMPLATE = '''
                 } catch (error) {
                     alert('Microphone access denied or not available');
                 }
-            } else {
+            } else if (isRecording && mediaRecorder) {
                 mediaRecorder.stop();
                 isRecording = false;
                 btn.classList.remove('recording');
                 btn.textContent = '🎤';
+            }
+        }
+        
+        // Send a text query directly (used by browser speech recognition)
+        async function sendQueryText(query) {
+            const container = document.querySelector('.chat-container');
+            container.classList.add('loading');
+            try {
+                const response = await fetch('/api/query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: 'text', query: query, want_audio: true })
+                });
+                const data = await response.json();
+                if (!response.ok || data.error) throw new Error(data.error || 'Request failed');
+                addMessage('assistant', data.response);
+                if (data.audio) { playAudio(data.audio); }
+                else { speakText(data.response); }
+            } catch (error) {
+                addMessage('assistant', '⚠️ Error: ' + error.message);
+            } finally {
+                container.classList.remove('loading');
+            }
+        }
+        
+        // Browser-based text-to-speech (no API key needed)
+        function speakText(text) {
+            if ('speechSynthesis' in window) {
+                speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.rate = 1.0;
+                utterance.pitch = 1.0;
+                speechSynthesis.speak(utterance);
             }
         }
         
@@ -1628,9 +1686,11 @@ HTML_TEMPLATE = '''
                 // Add assistant response
                 addMessage('assistant', data.response);
                 
-                // Play audio response
+                // Play audio response (ElevenLabs), otherwise browser TTS
                 if (data.audio) {
                     playAudio(data.audio);
+                } else {
+                    speakText(data.response);
                 }
             } catch (error) {
                 addMessage('assistant', '⚠️ Error: ' + error.message);
