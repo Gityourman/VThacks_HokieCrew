@@ -656,7 +656,7 @@ tigerdata_conn = None
 
 if TIGERDATA_URL and TIGERDATA_AVAILABLE:
     try:
-        tigerdata_conn = psycopg2.connect(TIGERDATA_URL)
+        tigerdata_conn = psycopg2.connect(TIGERDATA_URL, connect_timeout=5)
         print("✅ Connected to Tiger Data (Timescale)")
         
         # Initialize hypertables for time-series data
