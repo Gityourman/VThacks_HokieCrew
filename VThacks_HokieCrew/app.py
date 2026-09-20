@@ -12,7 +12,11 @@ import os
 import base64
 import json
 from flask import Flask, render_template_string, request, jsonify
-from databricks.sdk.runtime import *
+try:
+    from databricks.sdk.runtime import *
+except Exception:
+    spark = None
+    dbutils = None
 import pandas as pd
 
 # Initialize Flask app
@@ -1571,4 +1575,4 @@ HTML_TEMPLATE = '''
 # ============================================================================
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    app.run(host="0.0.0.0", port=8000, debug=False)
