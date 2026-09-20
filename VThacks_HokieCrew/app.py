@@ -23,6 +23,36 @@ import pandas as pd
 app = Flask(__name__)
 
 # ============================================================================
+# DATABRICKS TABLE ACCESS (works on both Databricks Apps and Render)
+# ============================================================================
+
+def query_table(table_name):
+    """Query a Databricks table and return as pandas DataFrame.
+    Uses spark if available (Databricks Apps), falls back to SQL connector (Render/other).
+    """
+    if spark is not None:
+        return spark.table(table_name).toPandas()
+
+    # Fallback: use Databricks SQL connector for non-Databricks environments (e.g. Render)
+    from databricks.sql import connect as sql_connect
+    server_hostname = os.environ.get("DATABRICKS_HOST", "").replace("https://", "").replace("http://", "").rstrip("/")
+    warehouse_id = os.environ.get("DATABRICKS_WAREHOUSE_ID", "")
+    http_path = os.environ.get("DATABRICKS_HTTP_PATH", f"/sql/1.0/warehouses/{warehouse_id}" if warehouse_id else "")
+    access_token = os.environ.get("DATABRICKS_TOKEN", "")
+
+    if not server_hostname or not access_token or not http_path:
+        raise Exception("Databricks connection not configured. Set DATABRICKS_HOST, DATABRICKS_TOKEN, and DATABRICKS_WAREHOUSE_ID environment variables.")
+
+    connection = sql_connect(server_hostname=server_hostname, http_path=http_path, access_token=access_token)
+    cursor = connection.cursor()
+    cursor.execute(f"SELECT * FROM {table_name}")
+    result = cursor.fetchall()
+    columns = [desc[0] for desc in cursor.description] if cursor.description else []
+    cursor.close()
+    connection.close()
+    return pd.DataFrame(result, columns=columns)
+
+# ============================================================================
 # FEATURE IMPORTS
 # ============================================================================
 # These functions will be imported from your feature notebooks once they're ready.
@@ -40,8 +70,8 @@ def recommend_bus_route(query: str) -> str:
     
     try:
         # Delta Lake: Get routes and vehicle positions
-        routes_df = spark.table("workspace.vthacks.bt_routes_full").toPandas()
-        positions_df = spark.table("workspace.vthacks.bt_vehicle_positions").toPandas()
+        routes_df = query_table("workspace.vthacks.bt_routes_full")
+        positions_df = query_table("workspace.vthacks.bt_vehicle_positions")
         
         # Tiger Data: Push current positions to time-series DB
         if tigerdata_conn:
@@ -168,9 +198,9 @@ def recommend_food(query: str) -> str:
     
     try:
         import re
-        menus_pdf = spark.table("workspace.default.food_menus").toPandas()
-        halls_pdf = spark.table("workspace.default.dining_halls").toPandas()
-        rest_pdf = spark.table("workspace.default.restaurants").toPandas()
+        menus_pdf = query_table("workspace.default.food_menus")
+        halls_pdf = query_table("workspace.default.dining_halls")
+        rest_pdf = query_table("workspace.default.restaurants")
         
         query_lower = query.lower()
         query_words = set(re.findall(r'\b\w+\b', query_lower))
@@ -337,7 +367,7 @@ def find_health_resources(query: str) -> str:
     if any(w in query_lower for w in ["counsel", "mental", "therapy", "wellness", "health", "sick", "medical", "doctor", "schiffert", "stress", "anxious", "depress", "flu", "vaccine", "prescription", "crisis"]):
         try:
             import re
-            health_pdf = spark.table("workspace.default.health_resources").toPandas()
+            health_pdf = query_table("workspace.default.health_resources")
             query_words = set(re.findall(r'\b\w+\b', query_lower))
             
             scored = []
@@ -399,9 +429,9 @@ def find_events_and_clubs(query: str) -> str:
     
     try:
         import re
-        events_pdf = spark.table("workspace.default.campus_events_clean").toPandas()
-        clubs_pdf = spark.table("workspace.default.student_clubs_clean").toPandas()
-        centers_pdf = spark.table("workspace.default.cultural_centers_clean").toPandas()
+        events_pdf = query_table("workspace.default.campus_events_clean")
+        clubs_pdf = query_table("workspace.default.student_clubs_clean")
+        centers_pdf = query_table("workspace.default.cultural_centers_clean")
         
         query_lower = query.lower()
         query_words = set(re.findall(r'\b\w+\b', query_lower))
@@ -492,10 +522,10 @@ def find_professional_resources(query: str) -> str:
     
     try:
         import re
-        research_pdf = spark.table("workspace.default.research_opportunities").toPandas()
-        resources_pdf = spark.table("workspace.default.career_resources").toPandas()
-        events_pdf = spark.table("workspace.default.career_events").toPandas()
-        pathways_pdf = spark.table("workspace.default.career_pathways").toPandas()
+        research_pdf = query_table("workspace.default.research_opportunities")
+        resources_pdf = query_table("workspace.default.career_resources")
+        events_pdf = query_table("workspace.default.career_events")
+        pathways_pdf = query_table("workspace.default.career_pathways")
         
         query_lower = query.lower()
         query_words = set(re.findall(r'\b\w+\b', query_lower))
@@ -1575,4 +1605,5 @@ HTML_TEMPLATE = '''
 # ============================================================================
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=False)
+    port = int(os.environ.get("DATABRICKS_APP_PORT", os.environ.get("PORT", 8000)))
+    app.run(host="0.0.0.0", port=port, debug=False)

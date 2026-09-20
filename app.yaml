@@ -1,5 +1,3 @@
 command:
   - python
   - VThacks_HokieCrew/app.py
-
-port: 8000

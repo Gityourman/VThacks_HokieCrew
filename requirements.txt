@@ -1,5 +1,6 @@
 flask>=2.3.0
 databricks-sdk>=0.20.0
+databricks-sql-connector>=3.0.0
 pandas>=2.0.0
 elevenlabs>=0.2.0
 psycopg2-binary>=2.9.0
